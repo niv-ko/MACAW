@@ -100,6 +100,7 @@ def run(args: argparse.Namespace, instance_idx: int = 0):
 if __name__ == '__main__':
     set_start_method('spawn')
     args = get_args()
+    args.task_config = 'config/cheetah_vel/40tasks_offline.json'
 
     if args.instances == 1:
         if args.profile:

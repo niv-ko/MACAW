@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import List, Callable, Optional
+from itertools import chain
 
 
 class DeepSet(nn.Module):
@@ -177,7 +178,7 @@ class BiasLinear(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, layer_widths: List[int], final_activation: Callable = lambda x: x, bias_linear: bool = False, extra_head_layers: List[int] = None, w_linear: bool = False):
+    def __init__(self, layer_widths: List[int], final_activation: Callable = lambda x: x, bias_linear: bool = False, extra_head_layers: List[int] = None, w_linear: bool = False, n_adaptation_layers=None, adapt_context_only=False):
         super().__init__()
 
         if len(layer_widths) < 2:
@@ -193,9 +194,14 @@ class MLP(nn.Module):
             linear = WLinear
         self.bias_linear = bias_linear
         self.aparams = []
+        self.adapt_context_only = adapt_context_only
+        self.adaptation_layers = []
+        adaptation_layers_indices = list(reversed(range(len(layer_widths) - 1)))[:n_adaptation_layers]
         
         for idx in range(len(layer_widths) - 1):
             w = linear(layer_widths[idx], layer_widths[idx + 1])
+            if idx in adaptation_layers_indices:
+                self.adaptation_layers.append(w)
             self.aparams.extend(w.adaptation_parameters())
             self.seq.add_module(f'fc_{idx}', w)
             if idx < len(layer_widths) - 2:
@@ -211,6 +217,7 @@ class MLP(nn.Module):
             for idx, (infc, outfc) in enumerate(zip(extra_head_layers[:-1], extra_head_layers[1:])):
                 self.head_seq.add_module(f'relu_{idx}', nn.ReLU())
                 w = linear(extra_head_layers[idx], extra_head_layers[idx + 1])
+                self.adaptation_layers.append(w)
                 self.aparams.extend(w.adaptation_parameters())
                 self.head_seq.add_module(f'fc_{idx}', w)
 
@@ -218,8 +225,12 @@ class MLP(nn.Module):
         return [self.seq[0]._linear.bias] if self.bias_linear else [self.seq[0].bias]
 
     def adaptation_parameters(self):
-        return self.parameters()
-        return self.aparams
+        if self.adapt_context_only:
+            param_list = [w.adaptation_parameters() for w in self.adaptation_layers]
+        else:
+            param_list = [w.parameters() for w in self.adaptation_layers]
+        for p in chain(param_list):
+            yield p
     
     def forward(self, x: torch.tensor, acts: Optional[torch.tensor] = None):
         if self._head and acts is not None:
